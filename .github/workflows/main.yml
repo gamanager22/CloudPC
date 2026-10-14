@@ -1,0 +1,253 @@
+name: Cloud PC
+
+on:
+  repository_dispatch:
+    types: [Cloud PC]
+  workflow_dispatch:
+
+jobs:
+  CloudPC:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Configure Core
+        run: |
+          $tz = "${{ secrets.RDP_TIMEZONE }}"
+          if (-not [string]::IsNullOrWhiteSpace($tz)) {
+              Set-TimeZone -Id $tz
+          }
+
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+
+          $path = "HKCU:\Control Panel\Accessibility\StickyKeys"
+          New-Item -Path $path -Force | Out-Null
+          Set-ItemProperty -Path $path -Name "Flags" -Value "58" -Type String
+          $path2 = "HKCU:\Control Panel\Accessibility\Keyboard Response"
+          New-Item -Path $path2 -Force | Out-Null
+          Set-ItemProperty -Path $path2 -Name "Flags" -Value "122" -Type String
+
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxInstanceCount" -Value 100 -Force
+
+          $rdpTcp = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+          Set-ItemProperty -Path $rdpTcp -Name "AudioMode" -Value 2 -Type DWord -Force
+          Set-ItemProperty -Path $rdpTcp -Name "fDisableCam"            -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $rdpTcp -Name "fDisableAudioCapture"  -Value 0 -Type DWord -Force
+
+          $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+          if (-not (Test-Path $policyPath)) { New-Item -Path$policyPath -Force | Out-Null }
+          Set-ItemProperty -Path $policyPath -Name "fDisableAudio"             -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $policyPath -Name "fDisableAudioCapture"      -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $policyPath -Name "fDisableCam"               -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $policyPath -Name "fDisableAudioRedirection" -Value 0 -Type DWord -Force
+
+          Set-Service -Name "AudioSrv" -StartupType Automatic
+          Start-Service -Name "AudioSrv" -ErrorAction SilentlyContinue
+          Set-Service -Name "AudioEndpointBuilder" -StartupType Automatic
+          Start-Service -Name "AudioEndpointBuilder" -ErrorAction SilentlyContinue
+
+          sc.exe failure AudioSrv             reset= 0 actions= restart/1000/restart/1000/restart/1000 | Out-Null
+          sc.exe failure AudioEndpointBuilder reset= 0 actions= restart/1000/restart/1000/restart/1000 | Out-Null
+
+          powercfg /change monitor-timeout-ac 0
+          powercfg /change standby-timeout-ac 0
+          powercfg /change disk-timeout-ac 0
+          powercfg /change hibernate-timeout-ac 0
+          powercfg /change monitor-timeout-dc 0
+          powercfg /change standby-timeout-dc 0
+
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name "LimitBlankPasswordUse" -Value 0 -Type DWord -Force
+
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User & Security Policies
+        env:
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+        run: |
+          $userName = "Cloud PC"
+          $password = "$env:RDP_PASSWORD"
+
+          $staleProfiles = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue |
+                              Where-Object { $_.Name -like "Cloud PC*" }
+          foreach ($p in$staleProfiles) {
+              Remove-Item -Path $p.FullName -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          secedit /export /cfg "$env:TEMP\secpol.cfg"
+          $cfgContent = Get-Content "$env:TEMP\secpol.cfg"
+          $cfgContent = $cfgContent -replace 'PasswordComplexity = 1', 'PasswordComplexity = 0'$cfgContent = $cfgContent -replace 'MinimumPasswordLength = \d+', 'MinimumPasswordLength = 0'$cfgContent = $cfgContent -replace 'LimitBlankPasswordUse = 1', 'LimitBlankPasswordUse = 0'$cfgContent | Out-File -Encoding ascii "$env:TEMP\secpol.cfg"
+          secedit /configure /db "$env:TEMP\secpol.sdb" /cfg "$env:TEMP\secpol.cfg" /areas SECURITYPOLICY
+
+          $existing = Get-LocalUser -Name$userName -ErrorAction SilentlyContinue
+          if ($existing) {
+              Remove-LocalUser -Name $userName -ErrorAction SilentlyContinue
+          }
+
+          $securePass = ConvertTo-SecureString$password -AsPlainText -Force
+          New-LocalUser -Name $userName -Password$securePass -AccountNeverExpires -PasswordNeverExpires -ErrorAction Stop
+
+          net user "$userName" "$password"
+          net user "$userName" /active:yes
+          net user "$userName" /passwordchg:no
+          net user "$userName" /expires:never
+
+          Add-LocalGroupMember -Group "Administrators"        -Member $userName -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $userName -ErrorAction SilentlyContinue
+
+          $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization'
+          if (-not (Test-Path $policyPath)) { New-Item -Path$policyPath -Force | Out-Null }
+          Set-ItemProperty -Path $policyPath -Name "NoLockScreen" -Value 1 -Type DWord -Force
+
+          $saverPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop'
+          New-Item -Path $saverPol -Force | Out-Null
+          Set-ItemProperty -Path $saverPol -Name "ScreenSaveActive"    -Value "0" -Type String -Force
+          Set-ItemProperty -Path $saverPol -Name "ScreenSaveTimeOut"   -Value "0" -Type String -Force
+          Set-ItemProperty -Path $saverPol -Name "ScreenSaverIsSecure" -Value "0" -Type String -Force
+
+          $sysPol = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+          if (-not (Test-Path $sysPol)) { New-Item -Path$sysPol -Force | Out-Null }
+          Set-ItemProperty -Path $sysPol -Name "InactivityTimeoutSecs"     -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $sysPol -Name "DisableLockWorkstation"    -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $sysPol -Name "EnableFirstLogonAnimation" -Value 0 -Type DWord -Force
+
+          $tsPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+          if (-not (Test-Path $tsPath)) { New-Item -Path$tsPath -Force | Out-Null }
+          Set-ItemProperty -Path $tsPath -Name "MaxIdleTime"             -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $tsPath -Name "MaxDisconnectionTime"   -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $tsPath -Name "RemoteAppLogoffTimeout" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $tsPath -Name "fResetBroken"            -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $tsPath -Name "fDisableAutoReconnect"  -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $tsPath -Name "fNoRemoteControl"        -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $tsPath -Name "fPromptForPassword"      -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $tsPath -Name "fAllowToGetHelp"         -Value 0 -Type DWord -Force
+
+          $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+          Set-ItemProperty -Path $winlogon -Name "AutoAdminLogon"    -Value "1"               -Force
+          Set-ItemProperty -Path $winlogon -Name "DefaultUsername"   -Value $userName         -Force
+          Set-ItemProperty -Path $winlogon -Name "DefaultPassword"   -Value $password         -Force
+          Set-ItemProperty -Path $winlogon -Name "DefaultDomainName" -Value $env:COMPUTERNAME -Force
+          Set-ItemProperty -Path $winlogon -Name "ForceAutoLogon"    -Value "1"               -Force
+          Remove-ItemProperty -Path $winlogon -Name "AutoLogonCount" -ErrorAction SilentlyContinue
+
+      - name: Install Virtual Display Driver
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'$ProgressPreference    = 'SilentlyContinue'
+
+          $driverZip = "$env:TEMP\usbmmidd.zip"
+          $driverDir = "C:\VirtualDisplay"
+          New-Item -ItemType Directory -Path $driverDir -Force | Out-Null
+          Remove-Item $driverZip -Force -ErrorAction SilentlyContinue
+
+          $urls = @(
+              "https://www.amyuni.com/downloads/usbmmidd_v2.zip",
+              "https://www.amyuni.com/downloads/usbmmidd.zip",
+              "https://github.com/itsmikethetech/Virtual-Display-Driver/releases/latest/download/usbmmidd_v2.zip"
+          )
+
+          $downloaded =$false
+          foreach ($url in$urls) {
+              try {
+                  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                  Invoke-WebRequest -Uri $url -OutFile$driverZip -TimeoutSec 45 -UseBasicParsing
+                  if ((Test-Path $driverZip) -and (Get-Item$driverZip).Length -gt 100000) {
+                      $downloaded =$true
+                      break
+                  }
+              } catch {}
+          }
+
+          if (-not $downloaded) {
+              exit 0
+          }
+
+          try {
+              Expand-Archive -Path $driverZip -DestinationPath$driverDir -Force -ErrorAction Stop
+          } catch {
+              exit 0
+          }
+
+          $installer = Get-ChildItem -Path$driverDir -Recurse -Filter "deviceinstaller64.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $installer) {
+              exit 0
+          }
+
+          Set-Location $installer.DirectoryName
+
+          & .\deviceinstaller64.exe install usbmmidd.inf usbmmidd 2>&1 | Out-Null
+          & .\deviceinstaller64.exe enableidd 1 2>&1 | Out-Null
+
+          Start-Sleep -Seconds 3
+
+      - name: Install & Connect Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+
+          curl.exe -sSL "$tsUrl" -o "$installerPath"
+
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/qn", "/norestart" -Wait -PassThru
+          Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+
+          $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
+
+          $timeout = 0
+          while (-not (Test-Path $tsExe) -and$timeout -lt 30) {
+              Start-Sleep -Seconds 2
+              $timeout += 2
+          }
+
+          if (-not (Test-Path $tsExe)) {
+              exit 1
+          }
+
+          Get-Service -Name "Tailscale" -ErrorAction SilentlyContinue | Start-Service -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
+
+          & "$tsExe" up --authkey="${{ secrets.TAILSCALE_AUTH_KEY }}" --hostname="gh-runner-$env:GITHUB_RUN_ID" --unattended
+
+          $tsIP = ""
+          for ($i = 1; $i -le 15; $i++) {$tsIP = (& "$tsExe" ip -4 2>$null).Trim()
+              if ($tsIP -and $tsIP -match "^\d+\.\d+\.\d+\.\d+$") { break }
+              Start-Sleep -Seconds 3
+          }
+
+          if (-not $tsIP) {
+              exit 1
+          }
+
+          "TAILSCALE_IP=$tsIP" \vert{} Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          
+      - name: Send IP to Cloudflare Worker
+        env:
+          CF_WORKER_URL: ${{ secrets.CF_WORKER_URL }}
+        run: |
+          $payload = @{
+              address  = "$env:TAILSCALE_IP"
+              username = "Cloud PC"
+          } | ConvertTo-Json
+
+          Invoke-RestMethod -Uri "$env:CF_WORKER_URL/webhook" -Method Post -Body $payload -ContentType "application/json"
+          
+      - name: Maintain Active Runner Loop
+        run: |
+          $totalSeconds   = 21000
+          $elapsedSeconds = 0
+
+          while ($elapsedSeconds -lt$totalSeconds) {
+              Start-Sleep -Seconds 300
+              $elapsedSeconds += 300
+          }
+
+          exit 0
+
+      - name: Clear Cloudflare Worker
+        if: always()
+        env:
+          CF_WORKER_URL: ${{ secrets.CF_WORKER_URL }}
+        run: |
+          try {
+              $body = @{ reason = "workflow-stopped" } | ConvertTo-Json
+              Invoke-RestMethod -Uri "$env:CF_WORKER_URL/clear" -Method Post -Body $body -ContentType "application/json"
+          } catch {}
