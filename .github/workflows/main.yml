@@ -68,8 +68,7 @@ jobs:
           $userName = "Cloud PC"
           $password = "$env:RDP_PASSWORD"
 
-          $staleProfiles = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue |
-                              Where-Object { $_.Name -like "Cloud PC*" }
+          $staleProfiles = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "Cloud PC*" }
           foreach ($p in$staleProfiles) {
               Remove-Item -Path $p.FullName -Recurse -Force -ErrorAction SilentlyContinue
           }
@@ -129,6 +128,18 @@ jobs:
           Set-ItemProperty -Path $winlogon -Name "DefaultDomainName" -Value $env:COMPUTERNAME -Force
           Set-ItemProperty -Path $winlogon -Name "ForceAutoLogon"    -Value "1"               -Force
           Remove-ItemProperty -Path $winlogon -Name "AutoLogonCount" -ErrorAction SilentlyContinue
+
+          $userHive = "C:\Users\$userName\NTUSER.DAT"
+          if (Test-Path $userHive) {
+              reg load "HKU\TEMPUSER" "$userHive" 2>$null \vert{} Out-Null$deskPath = "HKU:\TEMPUSER\Control Panel\Desktop"
+              if (Test-Path $deskPath) {
+                  Set-ItemProperty -Path $deskPath -Name "ScreenSaveActive"    -Value "0" -Force
+                  Set-ItemProperty -Path $deskPath -Name "ScreenSaveTimeOut"   -Value "0" -Force
+                  Set-ItemProperty -Path $deskPath -Name "ScreenSaverIsSecure" -Value "0" -Force
+              }
+              [gc]::Collect()
+              reg unload "HKU\TEMPUSER" 2>$null | Out-Null
+          }
 
       - name: Install Virtual Display Driver
         continue-on-error: true
