@@ -148,7 +148,8 @@ jobs:
       - name: Install Virtual Display Driver
         continue-on-error: true
         run: |
-          $ErrorActionPreference = 'Continue'$ProgressPreference    = 'SilentlyContinue'
+          $ErrorActionPreference = 'Continue'
+          $ProgressPreference    = 'SilentlyContinue'
 
           $driverZip = "$env:TEMP\usbmmidd.zip"
           $driverDir = "C:\VirtualDisplay"
@@ -161,13 +162,13 @@ jobs:
               "https://github.com/itsmikethetech/Virtual-Display-Driver/releases/latest/download/usbmmidd_v2.zip"
           )
 
-          $downloaded =$false
-          foreach ($url in$urls) {
+          $downloaded = $false
+          foreach ($url in $urls) {
               try {
                   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-                  Invoke-WebRequest -Uri $url -OutFile$driverZip -TimeoutSec 45 -UseBasicParsing
-                  if ((Test-Path $driverZip) -and (Get-Item$driverZip).Length -gt 100000) {
-                      $downloaded =$true
+                  Invoke-WebRequest -Uri $url -OutFile $driverZip -TimeoutSec 45 -UseBasicParsing
+                  if ((Test-Path $driverZip) -and (Get-Item $driverZip).Length -gt 100000) {
+                      $downloaded = $true
                       break
                   }
               } catch {}
@@ -178,12 +179,12 @@ jobs:
           }
 
           try {
-              Expand-Archive -Path $driverZip -DestinationPath$driverDir -Force -ErrorAction Stop
+              Expand-Archive -Path $driverZip -DestinationPath $driverDir -Force -ErrorAction Stop
           } catch {
               exit 0
           }
 
-          $installer = Get-ChildItem -Path$driverDir -Recurse -Filter "deviceinstaller64.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $installer = Get-ChildItem -Path $driverDir -Recurse -Filter "deviceinstaller64.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $installer) {
               exit 0
           }
@@ -202,7 +203,7 @@ jobs:
 
           curl.exe -sSL "$tsUrl" -o "$installerPath"
 
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/qn", "/norestart" -Wait -PassThru
+          $process = Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/qn", "/norestart" -Wait -PassThru
           Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
 
           $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
