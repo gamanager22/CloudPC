@@ -209,12 +209,13 @@ jobs:
           $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
 
           $timeout = 0
-          while (-not (Test-Path $tsExe) -and$timeout -lt 30) {
+          while (-not (Test-Path $tsExe) -and $timeout -lt 30) {
               Start-Sleep -Seconds 2
               $timeout += 2
           }
 
           if (-not (Test-Path $tsExe)) {
+              Write-Error "Tailscale executable was not found."
               exit 1
           }
 
@@ -224,16 +225,19 @@ jobs:
           & "$tsExe" up --authkey="${{ secrets.TAILSCALE_AUTH_KEY }}" --hostname="gh-runner-$env:GITHUB_RUN_ID" --unattended
 
           $tsIP = ""
-          for ($i = 1; $i -le 15; $i++) {$tsIP = (& "$tsExe" ip -4 2>$null).Trim()
+          for ($i = 1; $i -le 15; $i++) {
+              $tsIP = (& "$tsExe" ip -4 2>$null).Trim()
               if ($tsIP -and $tsIP -match "^\d+\.\d+\.\d+\.\d+$") { break }
               Start-Sleep -Seconds 3
           }
 
           if (-not $tsIP) {
+              Write-Error "Tailscale IP assignment timed out."
               exit 1
           }
 
-          "TAILSCALE_IP=$tsIP" \vert{} Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Tailscale IP assigned successfully: $tsIP"
+          "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           
       - name: Send IP to Cloudflare Worker
         env:
