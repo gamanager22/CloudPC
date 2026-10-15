@@ -232,8 +232,7 @@ jobs:
           
       - name: Maintain Active Runner Loop
         run: |
-          $totalSeconds   = 21000
-          $elapsedSeconds = 0
+          $totalSeconds   = 21000$elapsedSeconds = 0
 
           while ($elapsedSeconds -lt$totalSeconds) {
               Start-Sleep -Seconds 300
