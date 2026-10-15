@@ -69,22 +69,25 @@ jobs:
           $password = "$env:RDP_PASSWORD"
 
           $staleProfiles = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "Cloud PC*" }
-          foreach ($p in$staleProfiles) {
+          foreach ($p in $staleProfiles) {
               Remove-Item -Path $p.FullName -Recurse -Force -ErrorAction SilentlyContinue
           }
 
           secedit /export /cfg "$env:TEMP\secpol.cfg"
           $cfgContent = Get-Content "$env:TEMP\secpol.cfg"
-          $cfgContent = $cfgContent -replace 'PasswordComplexity = 1', 'PasswordComplexity = 0'$cfgContent = $cfgContent -replace 'MinimumPasswordLength = \d+', 'MinimumPasswordLength = 0'$cfgContent = $cfgContent -replace 'LimitBlankPasswordUse = 1', 'LimitBlankPasswordUse = 0'$cfgContent | Out-File -Encoding ascii "$env:TEMP\secpol.cfg"
+          $cfgContent = $cfgContent -replace 'PasswordComplexity = 1', 'PasswordComplexity = 0'
+          $cfgContent = $cfgContent -replace 'MinimumPasswordLength = \d+', 'MinimumPasswordLength = 0'
+          $cfgContent = $cfgContent -replace 'LimitBlankPasswordUse = 1', 'LimitBlankPasswordUse = 0'
+          $cfgContent | Out-File -Encoding ascii "$env:TEMP\secpol.cfg"
           secedit /configure /db "$env:TEMP\secpol.sdb" /cfg "$env:TEMP\secpol.cfg" /areas SECURITYPOLICY
 
-          $existing = Get-LocalUser -Name$userName -ErrorAction SilentlyContinue
+          $existing = Get-LocalUser -Name $userName -ErrorAction SilentlyContinue
           if ($existing) {
               Remove-LocalUser -Name $userName -ErrorAction SilentlyContinue
           }
 
-          $securePass = ConvertTo-SecureString$password -AsPlainText -Force
-          New-LocalUser -Name $userName -Password$securePass -AccountNeverExpires -PasswordNeverExpires -ErrorAction Stop
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name $userName -Password $securePass -AccountNeverExpires -PasswordNeverExpires -ErrorAction Stop
 
           net user "$userName" "$password"
           net user "$userName" /active:yes
@@ -95,7 +98,7 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $userName -ErrorAction SilentlyContinue
 
           $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization'
-          if (-not (Test-Path $policyPath)) { New-Item -Path$policyPath -Force | Out-Null }
+          if (-not (Test-Path $policyPath)) { New-Item -Path $policyPath -Force | Out-Null }
           Set-ItemProperty -Path $policyPath -Name "NoLockScreen" -Value 1 -Type DWord -Force
 
           $saverPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop'
@@ -105,14 +108,14 @@ jobs:
           Set-ItemProperty -Path $saverPol -Name "ScreenSaverIsSecure" -Value "0" -Type String -Force
 
           $sysPol = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
-          if (-not (Test-Path $sysPol)) { New-Item -Path$sysPol -Force | Out-Null }
+          if (-not (Test-Path $sysPol)) { New-Item -Path $sysPol -Force | Out-Null }
           Set-ItemProperty -Path $sysPol -Name "InactivityTimeoutSecs"     -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $sysPol -Name "DisableLockWorkstation"    -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $sysPol -Name "EnableFirstLogonAnimation" -Value 0 -Type DWord -Force
 
           $tsPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
-          if (-not (Test-Path $tsPath)) { New-Item -Path$tsPath -Force | Out-Null }
-          Set-ItemProperty -Path $tsPath -Name "MaxIdleTime"             -Value 0 -Type DWord -Force
+          if (-not (Test-Path $tsPath)) { New-Item -Path $tsPath -Force | Out-Null }
+          Set-ItemProperty -Path $tsPath -Name "MaxIdleTime"              -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $tsPath -Name "MaxDisconnectionTime"   -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $tsPath -Name "RemoteAppLogoffTimeout" -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $tsPath -Name "fResetBroken"            -Value 0 -Type DWord -Force
@@ -122,16 +125,17 @@ jobs:
           Set-ItemProperty -Path $tsPath -Name "fAllowToGetHelp"         -Value 0 -Type DWord -Force
 
           $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
-          Set-ItemProperty -Path $winlogon -Name "AutoAdminLogon"    -Value "1"               -Force
-          Set-ItemProperty -Path $winlogon -Name "DefaultUsername"   -Value $userName         -Force
-          Set-ItemProperty -Path $winlogon -Name "DefaultPassword"   -Value $password         -Force
+          Set-ItemProperty -Path $winlogon -Name "AutoAdminLogon"    -Value "1"                 -Force
+          Set-ItemProperty -Path $winlogon -Name "DefaultUsername"   -Value $userName           -Force
+          Set-ItemProperty -Path $winlogon -Name "DefaultPassword"   -Value $password           -Force
           Set-ItemProperty -Path $winlogon -Name "DefaultDomainName" -Value $env:COMPUTERNAME -Force
-          Set-ItemProperty -Path $winlogon -Name "ForceAutoLogon"    -Value "1"               -Force
+          Set-ItemProperty -Path $winlogon -Name "ForceAutoLogon"    -Value "1"                 -Force
           Remove-ItemProperty -Path $winlogon -Name "AutoLogonCount" -ErrorAction SilentlyContinue
 
           $userHive = "C:\Users\$userName\NTUSER.DAT"
           if (Test-Path $userHive) {
-              reg load "HKU\TEMPUSER" "$userHive" 2>$null \vert{} Out-Null$deskPath = "HKU:\TEMPUSER\Control Panel\Desktop"
+              reg load "HKU\TEMPUSER" "$userHive" 2>$null | Out-Null
+              $deskPath = "HKU:\TEMPUSER\Control Panel\Desktop"
               if (Test-Path $deskPath) {
                   Set-ItemProperty -Path $deskPath -Name "ScreenSaveActive"    -Value "0" -Force
                   Set-ItemProperty -Path $deskPath -Name "ScreenSaveTimeOut"   -Value "0" -Force
@@ -140,7 +144,7 @@ jobs:
               [gc]::Collect()
               reg unload "HKU\TEMPUSER" 2>$null | Out-Null
           }
-
+          
       - name: Install Virtual Display Driver
         continue-on-error: true
         run: |
